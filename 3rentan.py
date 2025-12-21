@@ -91,8 +91,21 @@ if st.session_state["user_role"]:
         st.sidebar.info(f"所属: {color} {t_label}")
 
     st.sidebar.markdown("---")
-    st.sidebar.write(f"🔴 {tn_a}: {game_data['team_scores']['A']} pts")
-    st.sidebar.write(f"🔵 {tn_b}: {game_data['team_scores']['B']} pts")
+    if game_data["phase"] not in ["setup", "lobby"]:
+        st.sidebar.markdown("### 🏆 現在のスコア")
+        
+        # チーム平均の計算
+        team_a_size = len(game_data['teams']['A']) if len(game_data['teams']['A']) > 0 else 1
+        team_b_size = len(game_data['teams']['B']) if len(game_data['teams']['B']) > 0 else 1
+        
+        avg_a = game_data['team_scores']['A'] / team_a_size
+        avg_b = game_data['team_scores']['B'] / team_b_size
+        
+        st.sidebar.write(f"🔴 {tn_a}: {game_data['team_scores']['A']} pts (平均: {avg_a:.2f})")
+        st.sidebar.write(f"🔵 {tn_b}: {game_data['team_scores']['B']} pts (平均: {avg_b:.2f})")
+    else:
+        st.sidebar.write(f"🔴 {tn_a}: {game_data['team_scores']['A']} pts")
+        st.sidebar.write(f"🔵 {tn_b}: {game_data['team_scores']['B']} pts")
     
     if st.sidebar.button("ログアウト"):
         st.session_state.clear()
@@ -390,15 +403,32 @@ elif phase == "game_over":
     sa = game_data["team_scores"]["A"]
     sb = game_data["team_scores"]["B"]
     
-    c1, c2 = st.columns(2)
-    c1.metric(f"🔴 {tn_a}", sa)
-    c2.metric(f"🔵 {tn_b}", sb)
+    # チーム平均の計算
+    team_a_size = len(game_data['teams']['A']) if len(game_data['teams']['A']) > 0 else 1
+    team_b_size = len(game_data['teams']['B']) if len(game_data['teams']['B']) > 0 else 1
     
-    if sa > sb: st.markdown(f"# 👑 {tn_a} の優勝!")
-    elif sb > sa: st.markdown(f"# 👑 {tn_b} の優勝!")
-    else: st.markdown("# 🤝 引き分け!")
+    avg_a = sa / team_a_size
+    avg_b = sb / team_b_size
+    
+    c1, c2 = st.columns(2)
+    c1.metric(f"🔴 {tn_a}", f"{sa} pts", f"平均: {avg_a:.2f}")
+    c2.metric(f"🔵 {tn_b}", f"{sb} pts", f"平均: {avg_b:.2f}")
+    
+    st.markdown("---")
+    st.subheader("チーム平均点で判定")
+    
+    if avg_a > avg_b: 
+        st.markdown(f"# 👑 {tn_a} の優勝!")
+        st.success(f"{tn_a} の平均点 {avg_a:.2f} > {tn_b} の平均点 {avg_b:.2f}")
+    elif avg_b > avg_a: 
+        st.markdown(f"# 👑 {tn_b} の優勝!")
+        st.success(f"{tn_b} の平均点 {avg_b:.2f} > {tn_a} の平均点 {avg_a:.2f}")
+    else: 
+        st.markdown("# 🤝 引き分け!")
+        st.info(f"両チームの平均点: {avg_a:.2f}")
     
     if my_role == "host":
+        st.write("---")
         if st.button("最初に戻る", type="primary"):
             if os.path.exists(DATA_FILE): os.remove(DATA_FILE)
             st.session_state.clear()
