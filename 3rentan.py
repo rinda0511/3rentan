@@ -1,30 +1,30 @@
 import streamlit as st
+import pandas as pd  # <-- 追加: データ集計・グラフ化用
 import json
 import os
 import random
 
-# --- データベース (JSONファイルで全員の状況を共有) ---
+# --- データベース ---
 DATA_FILE = "sanrentan_final.json"
 
 def load_data():
-    # データファイルがない場合の初期設定 (個人戦用に構造を変更)
     default_data = {
-        "phase": "setup",       # setup, lobby, round_input, betting, result, game_over
+        "phase": "setup",       
         "config": {
-            "total_rounds": 3,  # 初期ラウンド数
+            "total_rounds": 3,  
         },
         "status": {
             "current_round": 1,
         },
-        "players": [],          # 参加者のリスト
-        "player_scores": {},    # 各個人のスコア
+        "players": [],          
+        "player_scores": {},    
         "round_data": {
             "target_name": "",  
             "topic": "",        
             "correct_order": [], 
             "options": []       
         },
-        "bets": {},             # 各自の予想を記録 ("SKIP" も許容)
+        "bets": {},             
     }
     if not os.path.exists(DATA_FILE): return default_data
     try:
@@ -35,12 +35,10 @@ def save_data(data):
     with open(DATA_FILE, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=4)
 
-# 手動更新用の関数
 def show_refresh_button(label="🔄 画面を更新"):
     if st.button(label):
         st.rerun()
 
-# 得点計算ロジック
 def calculate_score(user_bet, correct_order):
     if not user_bet or isinstance(user_bet, str) or len(user_bet) < 3: 
         return 0, "なし"
@@ -58,7 +56,6 @@ def calculate_score(user_bet, correct_order):
     
     return max(scores, key=lambda x: x[0]) if scores else (0, "ハズレ")
 
-# データをロード
 game_data = load_data()
 
 
@@ -69,7 +66,6 @@ if "user_role" not in st.session_state:
     st.session_state["user_role"] = None 
     st.session_state["user_name"] = ""
 
-# --- サイドバー (自分の情報・スコア表示) ---
 if st.session_state["user_role"]:
     role = st.session_state["user_role"]
     name = st.session_state["user_name"]
@@ -82,19 +78,33 @@ if st.session_state["user_role"]:
             if os.path.exists(DATA_FILE): os.remove(DATA_FILE)
             st.session_state.clear()
             st.rerun()
+        
+        st.sidebar.markdown("---")
+        st.sidebar.markdown("### 🗑️ プレイヤー管理")
+        st.sidebar.caption("通信切断等で残ってしまったプレイヤーを削除できます")
+        player_to_remove = st.sidebar.selectbox("削除するプレイヤーを選択", [""] + game_data["players"])
+        if st.sidebar.button("プレイヤーを削除"):
+            if player_to_remove in game_data["players"]:
+                game_data["players"].remove(player_to_remove)
+                if player_to_remove in game_data["player_scores"]:
+                    del game_data["player_scores"][player_to_remove]
+                if player_to_remove in game_data["bets"]:
+                    del game_data["bets"][player_to_remove]
+                save_data(game_data)
+                st.sidebar.success(f"{player_to_remove} を削除しました")
+                st.rerun()
+                
     else:
-        # 自分の現在の得点を表示
         my_score = game_data["player_scores"].get(name, 0)
         st.sidebar.info(f"あなたの得点: **{my_score} pts**")
 
     st.sidebar.markdown("---")
     st.sidebar.markdown("### 🏆 現在のスコアランキング")
     
-    # スコア順にソートして表示
     sorted_scores = sorted(game_data["player_scores"].items(), key=lambda x: x[1], reverse=True)
     for i, (p_name, p_score) in enumerate(sorted_scores):
         medal = "🥇" if i == 0 else "🥈" if i == 1 else "🥉" if i == 2 else "👤"
-        if p_score == 0 and i > 2: medal = "👤" # 0点の場合はメダルをつけないなどの調整
+        if p_score == 0 and i > 2: medal = "👤"
         st.sidebar.write(f"{medal} {p_name}: {p_score} pts")
     
     st.sidebar.markdown("---")
@@ -111,16 +121,15 @@ if st.session_state["user_role"] is None:
     
     with tab1:
         input_name = st.text_input("あなたの名前(ニックネーム)", key="p_name")
+        st.caption("※通信が切れた場合は、同じ名前を入力すれば元のスコアで復帰できます。")
         
         if st.button("ゲームに参加する", type="primary"):
             if input_name:
-                # 新規プレイヤーの登録
                 if input_name not in game_data["players"]:
                     game_data["players"].append(input_name)
                     game_data["player_scores"][input_name] = 0
                     save_data(game_data)
                 
-                # セッション保存
                 st.session_state["user_role"] = "player"
                 st.session_state["user_name"] = input_name
                 st.rerun()
@@ -130,7 +139,7 @@ if st.session_state["user_role"] is None:
     with tab2:
         pwd = st.text_input("ホストパスワード", type="password")
         if st.button("管理者として入室", type="primary"):
-            if pwd == "0000": # パスワードは適宜変更してください
+            if pwd == "0000":
                 st.session_state["user_role"] = "host"
                 st.session_state["user_name"] = "HOST"
                 st.rerun()
@@ -140,22 +149,20 @@ if st.session_state["user_role"] is None:
 
 
 # ==========================================
-# メイン画面 (ロールによって表示を分岐)
+# メイン画面
 # ==========================================
 st.title("🐇 サンレンタン (個人戦)")
 phase = game_data["phase"]
 my_role = st.session_state["user_role"]
 my_name = st.session_state["user_name"]
+current_round_num = game_data["status"]["current_round"]
 
-# ラウンド表示
 if phase not in ["setup", "lobby", "game_over"]:
-    curr = game_data["status"]["current_round"]
+    curr = current_round_num
     total = game_data["config"]["total_rounds"]
     st.progress(curr/total, text=f"Round {curr} / {total}")
 
-# ----------------------------------------
-# 1. Setup (ホストのみ操作)
-# ----------------------------------------
+
 if phase == "setup":
     if my_role == "host":
         st.header("⚙️ 初期設定")
@@ -170,13 +177,10 @@ if phase == "setup":
         st.info("ホストが初期設定中です。しばらくお待ちください...")
         show_refresh_button()
 
-# ----------------------------------------
-# 2. Lobby (全員表示)
-# ----------------------------------------
+
 elif phase == "lobby":
     st.header(f"👥 参加者待機中 ({len(game_data['players'])}人)")
     
-    # 参加者一覧を列で表示
     cols = st.columns(3)
     for idx, p in enumerate(game_data["players"]):
         cols[idx % 3].success(f"👤 {p}")
@@ -195,11 +199,9 @@ elif phase == "lobby":
         st.write("ホストの開始を待っています...")
         show_refresh_button()
 
-# ----------------------------------------
-# 3. Round Input (ホストだけが見える)
-# ----------------------------------------
+
 elif phase == "round_input":
-    r = game_data["status"]["current_round"]
+    r = current_round_num
     st.header(f"第 {r} ラウンド - お題入力")
     
     if my_role == "host":
@@ -208,13 +210,11 @@ elif phase == "round_input":
             target = st.text_input("お題の人", placeholder="例: 佐藤さん")
             topic = st.text_input("お題テーマ", placeholder="例: 好きなランチメニュー")
             
-            st.markdown("**正解の順番 (1位〜3位)**")
             c1, c2, c3 = st.columns(3)
             a1 = c1.text_input("🥇 1位")
             a2 = c2.text_input("🥈 2位")
             a3 = c3.text_input("🥉 3位")
             
-            st.markdown("**ダミー選択肢 (4つ)**")
             c4, c5 = st.columns(2)
             d1 = c4.text_input("ダミー1")
             d2 = c5.text_input("ダミー2")
@@ -229,7 +229,7 @@ elif phase == "round_input":
                         "target_name": target, "topic": topic,
                         "correct_order": [a1, a2, a3], "options": opts
                     }
-                    game_data["bets"] = {} # 回答状況をリセット
+                    game_data["bets"] = {} 
                     game_data["phase"] = "betting"
                     save_data(game_data)
                     st.rerun()
@@ -240,9 +240,7 @@ elif phase == "round_input":
         st.image("https://placehold.co/600x200?text=Waiting...", caption="待機中")
         show_refresh_button()
 
-# ----------------------------------------
-# 4. Betting (各プレイヤーが自分の予想を入力)
-# ----------------------------------------
+
 elif phase == "betting":
     rd = game_data["round_data"]
     st.subheader(f"お題: {rd['target_name']}さんの『{rd['topic']}』")
@@ -260,10 +258,10 @@ elif phase == "betting":
             st.write("他のメンバーを待っています...")
             show_refresh_button()
         else:
-            # ▼ お題の人かどうかを選択するチェックボックスを追加
-            is_target = st.checkbox("🙋‍♀️ 私はこのお題の対象者です（回答をスキップ）")
+            skip_key = f"skip_{current_round_num}"
+            is_target = st.checkbox("🙋‍♀️ 私はこのお題の対象者です（回答をスキップ）", key=skip_key)
             
-            with st.form("betting_form"):
+            with st.form(f"betting_form_{current_round_num}"):
                 if is_target:
                     st.warning("お題の対象者は予想を行いません。「確定する」を押して待機してください。")
                     submitted = st.form_submit_button("スキップを確定する", type="primary")
@@ -273,12 +271,11 @@ elif phase == "betting":
                         st.rerun()
                 else:
                     st.write("選択肢から **1位・2位・3位** をそれぞれ選んでください")
-                    st.markdown("### 順位を選択")
                     col1, col2, col3 = st.columns(3)
                     
-                    first = col1.selectbox("🥇 1位", [""] + rd["options"], key="first")
-                    second = col2.selectbox("🥈 2位", [""] + rd["options"], key="second")
-                    third = col3.selectbox("🥉 3位", [""] + rd["options"], key="third")
+                    first = col1.selectbox("🥇 1位", [""] + rd["options"], key=f"first_{current_round_num}")
+                    second = col2.selectbox("🥈 2位", [""] + rd["options"], key=f"second_{current_round_num}")
+                    third = col3.selectbox("🥉 3位", [""] + rd["options"], key=f"third_{current_round_num}")
                     
                     submitted = st.form_submit_button("回答を確定する", type="primary")
                     
@@ -307,28 +304,43 @@ elif phase == "betting":
         st.caption("最新の回答状況を確認するには更新ボタンを押してください")
         show_refresh_button("🔄 回答状況を更新")
 
-# ----------------------------------------
-# 5. Result (全員で結果を見る)
-# ----------------------------------------
+
 elif phase == "result":
     st.header("🎉 結果発表")
     rd = game_data["round_data"]
     correct = rd["correct_order"]
     
     st.subheader(f"お題: {rd['target_name']}さんの『{rd['topic']}』")
-    st.markdown("### 正解の順位")
     c1, c2, c3 = st.columns(3)
-    c1.error(f"🥇 {correct[0]}")
-    c2.warning(f"🥈 {correct[1]}")
-    c3.success(f"🥉 {correct[2]}")
+    c1.error(f"🥇 正解 1位: {correct[0]}")
+    c2.warning(f"🥈 正解 2位: {correct[1]}")
+    c3.success(f"🥉 正解 3位: {correct[2]}")
     
     st.write("---")
-    st.markdown("### みんなの予想結果")
     
-    # 個人別結果表示 (辞書に今回獲得したポイントを一時保存)
+    # --- 追加: 投票分布のグラフ表示 ---
+    st.markdown("### 📊 みんなの予想分布")
+    
+    # 全選択肢ごとの投票数をカウントする辞書を作成
+    vote_data = {opt: {"🥇 1位予想": 0, "🥈 2位予想": 0, "🥉 3位予想": 0} for opt in rd["options"]}
+    
+    for p, bet in game_data["bets"].items():
+        if bet != "SKIP" and isinstance(bet, list) and len(bet) == 3:
+            # 投票があった選択肢のカウントを増やす
+            if bet[0] in vote_data: vote_data[bet[0]]["🥇 1位予想"] += 1
+            if bet[1] in vote_data: vote_data[bet[1]]["🥈 2位予想"] += 1
+            if bet[2] in vote_data: vote_data[bet[2]]["🥉 3位予想"] += 1
+            
+    # pandasのDataFrameに変換して、グラフを描画
+    df_votes = pd.DataFrame(vote_data).T # 行を選択肢、列を順位にするために転置(T)
+    st.bar_chart(df_votes)
+    # ---------------------------------
+    
+    st.write("---")
+    st.markdown("### 👤 個人の予想結果")
+    
     scores_diff = {} 
-    
-    cols = st.columns(3) # 3列で見やすく配置
+    cols = st.columns(3) 
     for idx, p in enumerate(game_data["players"]):
         with cols[idx % 3]:
             bet = game_data["bets"].get(p)
@@ -350,12 +362,10 @@ elif phase == "result":
     if my_role == "host":
         st.write("---")
         if st.button("得点を加算して次へ", type="primary"):
-            # 得点の加算処理
             for p, (s, l) in scores_diff.items():
                 if p in game_data["player_scores"]:
                     game_data["player_scores"][p] += s
             
-            # 終了判定
             if game_data["status"]["current_round"] >= game_data["config"]["total_rounds"]:
                 game_data["phase"] = "game_over"
             else:
@@ -368,14 +378,11 @@ elif phase == "result":
         st.info("ホストの進行を待っています...")
         show_refresh_button()
 
-# ----------------------------------------
-# 6. Game Over
-# ----------------------------------------
+
 elif phase == "game_over":
     st.balloons()
     st.title("🏆 最終結果発表")
     
-    # スコア順に並び替え
     final_ranking = sorted(game_data["player_scores"].items(), key=lambda x: x[1], reverse=True)
     
     if final_ranking:
